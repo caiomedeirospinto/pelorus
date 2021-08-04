@@ -16,6 +16,7 @@ import pelorus
 
 # region test constants
 APP_LABEL = pelorus.get_app_label()
+SERVERLESS_LABEL = pelorus.get_serverless_label()
 
 FOO_NS = "foo_ns"
 BAR_NS = "bar_ns"
@@ -29,6 +30,8 @@ FOO_LABEL_VALUE = "test"
 
 REPLICA_SET = "ReplicaSet"
 REP_CONTROLLER = "ReplicationController"
+KNATIVE_CONFIGURATION = "Configuration"
+KNATIVE_SERVICE = "Revision"
 UNKNOWN_OWNER_KIND = "UnknownOwnerKind"
 
 FOO_REP = "foo_rc"
@@ -38,6 +41,11 @@ BAR_REP_KIND = REPLICA_SET
 BAZ_REP = "baz_unknown"
 BAZ_REP_KIND = UNKNOWN_OWNER_KIND
 QUUX_REP_KIND = REPLICA_SET
+
+FOO_REV = "foo_rev_1"
+FOO_REV_APP = "foo_serverless_app"
+BAR_REV = "bar_rev_1"
+BAR_REV_APP = "bar_serverless_app"
 
 FOO_POD_SHAS = [
     "sha256:b4465ee3a99034c395ad4296b251cbe8d12f1676a107e942f9f543a185d67b2b"
@@ -59,14 +67,17 @@ QUUX_POD_SHAS = [
 class DynClientMockData:
     pods: Sequence[Pod]
     replicators: Sequence[Replicator]
+    revisions: Sequence[Revision]
 
     def __attrs_post_init__(self):
         self.mock_client = NonCallableMock(DynamicClient)
         self.pods_mock = NonCallableMock(Discoverer)
+        self.revisions_mock = NonCallableMock(Discoverer)
         self.replicators_by_kind = defaultdict(lambda: NonCallableMock(Discoverer))
 
         self.mock_client.resources.get.side_effect = self.get_resource
         self.pods_mock.get.side_effect = self.get_pods
+        self.revisions_mock.get.side_effect = self.get_revisions
 
         for rep in self.replicators:
             mock = self.replicators_by_kind[rep.kind]
@@ -77,6 +88,8 @@ class DynClientMockData:
     def get_resource(self, *, kind: str, **_kwargs):
         if kind == "Pod":
             return self.pods_mock
+        elif kind == "Revision":
+            return self.revisions_mock
         elif kind.startswith("Replica"):
             return self.replicators_by_kind[kind]
         raise ValueError(f"Unknown, un-mocked resource kind '{kind}'")
@@ -86,6 +99,9 @@ class DynClientMockData:
 
     def get_replicas(self, *, kind: str, **_kwargs):
         return ResourceGetResponse([x for x in self.replicators if x.kind == kind])
+    
+    def get_revisions(self, **_kwargs):
+        return ResourceGetResponse(self.revisions)
 
 
 def rc(
@@ -120,7 +136,30 @@ def pod(namespace: str, owner_refs: list[OwnerRef], container_shas: list[str]):
         spec=PodSpec(containers=[Container(x) for x in container_shas]),
     )
 
-
+def revision(
+    name: str,
+    serverless_label: str,
+    creation_timestamp: datetime,
+    namespace: str,
+    owner_refs: list[OwnerRef],
+    image_sha: str,
+    labels: dict[str, str] = None,):
+    """
+    Create a Knative Service Revision with appropriate metadata
+    """
+    labels = labels or {}
+    labels[SERVERLESS_LABEL] = serverless_label
+    return Revision(
+        kind=KNATIVE_SERVICE,
+        metadata=Metadata(
+            name=name,
+            namespace=namespace,
+            labels=labels,
+            creationTimestamp=creation_timestamp,
+            ownerReferences=owner_refs
+        ),
+        status=RevisionStatus(imageDigest=image_sha),
+    )
 # endregion
 
 
@@ -146,7 +185,26 @@ def test_generate_normal_case() -> None:
         pod(BAZ_NS, [OwnerRef(BAZ_REP_KIND, BAZ_REP)], BAZ_POD_SHAS),
     ]
 
-    data = DynClientMockData(pods=pods, replicators=[foo_rep, bar_rep])
+    revisions = [
+        revision(
+            FOO_REV,
+            FOO_REV_APP,
+            random_time(),
+            FOO_NS,
+            [OwnerRef(KNATIVE_CONFIGURATION, FOO_REV_APP)],
+            FOO_POD_SHAS[0]
+        ),
+        revision(
+            BAR_REV,
+            BAR_REV_APP,
+            random_time(),
+            BAR_NS,
+            [OwnerRef(KNATIVE_CONFIGURATION, BAR_REV_APP)],
+            BAR_POD_SHAS[0]
+        ),
+    ]
+
+    data = DynClientMockData(pods=pods, replicators=[foo_rep, bar_rep], revisions=revisions)
 
     expected: list[DeployTimeMetric] = [
         DeployTimeMetric(
@@ -161,6 +219,20 @@ def test_generate_normal_case() -> None:
             namespace=BAR_NS,
             labels={APP_LABEL: BAR_APP},
             deploy_time=bar_rep.metadata.creationTimestamp,
+            image_sha=BAR_POD_SHAS[0],
+        ),
+        DeployTimeMetric(
+            name=FOO_REV_APP,
+            namespace=FOO_NS,
+            labels={SERVERLESS_LABEL: FOO_REV_APP},
+            deploy_time=revisions[0].metadata.creationTimestamp,
+            image_sha=FOO_POD_SHAS[0],
+        ),
+        DeployTimeMetric(
+            name=BAR_REV_APP,
+            namespace=BAR_NS,
+            labels={SERVERLESS_LABEL: BAR_REV_APP},
+            deploy_time=revisions[1].metadata.creationTimestamp,
             image_sha=BAR_POD_SHAS[0],
         ),
     ]

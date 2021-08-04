@@ -14,7 +14,8 @@ from prometheus_client.core import REGISTRY, GaugeMetricFamily
 import pelorus
 from pelorus.log import log_namespaces
 
-supported_replica_objects = {"ReplicaSet", "ReplicationController"}
+# Configuration comes from Knative Serving
+supported_replica_objects = {"ReplicaSet", "ReplicationController", "Configuration"}
 
 # A NamespaceSpec lists namespaces to restrict the search to.
 # Use None or an empty list to include all namespaces.
@@ -98,6 +99,9 @@ def generate_metrics(
         | get_replicas(dyn_client, "extensions/v1beta1", "ReplicaSet")
     )
 
+    # Get Metrics from fulltime running pods strategies: 
+    # - DeploymentConfig
+    # - Deployment
     for pod in pods:
         namespace = pod.metadata.namespace
         owner_refs = pod.metadata.ownerReferences
@@ -143,6 +147,58 @@ def generate_metrics(
                     image_sha=sha,
                 )
                 yield metric
+
+    # Get Metrics from sleeper pods strategies: 
+    # - Knative Serving
+    revisions_dict = dyn_client.resources.get(
+        api_version="serving.knative.dev/v1", 
+        kind="Revision"
+    ).get(
+        label_selector=pelorus.get_serverless_label()
+    ).items
+
+    for revision in revisions_dict:
+        namespace = revision.metadata.namespace
+        owner_refs = revision.metadata.ownerReferences
+        
+        if not in_namespace(namespace) or not owner_refs:
+            continue
+
+        logging.debug(
+            "Getting Replicas for Service Revision: %s in namespace: %s",
+            revision.metadata.name,
+            revision.metadata.namespace,
+        )
+
+        # Get deploytime from the owning controller of the pod.
+        # We track all already-visited controllers to not duplicate metrics per-pod.
+        for ref in owner_refs:
+            full_path = f"{namespace}/{revision.metadata.name}"
+
+            if ref.kind not in supported_replica_objects or already_seen(full_path) or not revision.status.imageDigest:
+                continue
+
+            logging.debug(
+                "Getting replica: %s, kind: %s, namespace: %s, sha: %s",
+                ref.name,
+                ref.kind,
+                namespace,
+                revision.status.imageDigest
+            )
+
+            mark_as_seen(full_path)
+            
+            # Since a commit will be built into a particular image and there could be multiple
+            # containers (images) per pod, we will push one metric per image/container in the
+            # pod template
+            metric = DeployTimeMetric(
+                name=revision.metadata.labels[pelorus.get_serverless_label()],
+                namespace=namespace,
+                labels=revision.metadata.labels,
+                deploy_time=revision.metadata.creationTimestamp,
+                image_sha=image_sha(revision.status.imageDigest),
+            )
+            yield metric
 
 
 def get_replicas(

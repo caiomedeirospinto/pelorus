@@ -128,6 +128,7 @@ This exporter provides several configuration options, passed via environment var
 |---|---|---|---|
 | `LOG_LEVEL` | no | Set the log level. One of `DEBUG`, `INFO`, `WARNING`, `ERROR` | `INFO` |
 | `APP_LABEL` | no | Changes the label key used to identify applications  | `app.kubernetes.io/name`  |
+| `SERVERLESS_LABEL` | no | Changes the label key used to identify applications deployed as Knative Service  | `serving.knative.dev/service`  |
 | `PROD_LABEL` | no | Changes the label key used to identify namespaces that are considered production environments. | unset; matches all namespaces |
 | `NAMESPACES` | no | Restricts the set of namespaces from which metrics will be collected. ex: `myapp-ns-dev,otherapp-ci` | unset; scans all namespaces |
     

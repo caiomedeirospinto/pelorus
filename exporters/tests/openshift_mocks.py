@@ -44,6 +44,18 @@ class Replicator:
         return OwnerRef(kind=self.kind, name=self.metadata.name)
 
 
+@attr.define
+class RevisionStatus:
+    "Represents a Knative Service Revision Status"
+    imageDigest: str
+
+@attr.define
+class Revision:
+    "Represents a Knative Service Revision"
+    kind: str
+    metadata: Metadata
+    status: RevisionStatus
+
 Item = TypeVar("Item")
 
 

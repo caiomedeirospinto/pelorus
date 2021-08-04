@@ -7,6 +7,7 @@ from typing import Optional, Sequence
 from kubernetes import config
 
 DEFAULT_APP_LABEL = "app.kubernetes.io/name"
+DEFAULT_SERVERLESS_LABEL = "serving.knative.dev/service"
 DEFAULT_PROD_LABEL = ""
 DEFAULT_LOG_LEVEL = "INFO"
 DEFAULT_LOG_FORMAT = "%(asctime)-15s %(levelname)-8s %(message)s"
@@ -69,6 +70,8 @@ def convert_timestamp_to_date_time_str(timestamp, format_string="%Y-%m-%dT%H:%M:
 def get_app_label():
     return os.getenv("APP_LABEL", DEFAULT_APP_LABEL)
 
+def get_serverless_label():
+    return os.getenv("SERVERLESS_LABEL", DEFAULT_SERVERLESS_LABEL)
 
 def get_prod_label():
     return os.getenv("PROD_LABEL", DEFAULT_PROD_LABEL)
